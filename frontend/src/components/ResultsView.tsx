@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { CheckCircle2, XCircle, Users } from 'lucide-react';
+import { EmptyState } from './ui/EmptyState';
 
 interface ResultsViewProps {
   results: {
@@ -17,7 +18,8 @@ interface ResultsViewProps {
 export default function ResultsView({ results, onReset }: ResultsViewProps) {
   const [activeTab, setActiveTab] = useState<'imported' | 'skipped'>('imported');
 
-  const displayData = activeTab === 'imported' ? results.data : results.skippedData;
+  // Safe fallback to empty array to prevent "Cannot read properties of undefined (reading 'length')" crash
+  const displayData = (activeTab === 'imported' ? results.data : results.skippedData) || [];
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 animate-in fade-in duration-500">
@@ -35,7 +37,10 @@ export default function ResultsView({ results, onReset }: ResultsViewProps) {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-card border rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md">
+        <div 
+          className="bg-card border rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md animate-in fade-in zoom-in-95 duration-500 fill-mode-both" 
+          style={{ animationDelay: '100ms' }}
+        >
           <div className="bg-blue-100 dark:bg-blue-500/20 p-3 rounded-xl border border-blue-200 dark:border-blue-500/30">
             <Users className="w-6 h-6 text-blue-600 dark:text-blue-400" />
           </div>
@@ -45,7 +50,10 @@ export default function ResultsView({ results, onReset }: ResultsViewProps) {
           </div>
         </div>
         
-        <div className="bg-card border border-emerald-200/50 dark:border-emerald-500/20 rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md">
+        <div 
+          className="bg-card border border-emerald-200/50 dark:border-emerald-500/20 rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md animate-in fade-in zoom-in-95 duration-500 fill-mode-both"
+          style={{ animationDelay: '200ms' }}
+        >
           <div className="bg-emerald-100 dark:bg-emerald-500/20 p-3 rounded-xl border border-emerald-200 dark:border-emerald-500/30">
             <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
           </div>
@@ -55,13 +63,16 @@ export default function ResultsView({ results, onReset }: ResultsViewProps) {
           </div>
         </div>
         
-        <div className="bg-card border border-destructive/20 rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md">
-          <div className="bg-destructive/10 p-3 rounded-xl border border-destructive/20">
-            <XCircle className="w-6 h-6 text-destructive" />
+        <div 
+          className="bg-card border border-destructive/20 rounded-2xl p-6 shadow-sm flex items-center gap-4 transition-all hover:shadow-md animate-in fade-in zoom-in-95 duration-500 fill-mode-both"
+          style={{ animationDelay: '300ms' }}
+        >
+          <div className="bg-destructive/10 dark:bg-destructive/20 p-3 rounded-xl border border-destructive/20 dark:border-destructive/30">
+            <XCircle className="w-6 h-6 text-destructive dark:text-red-400" />
           </div>
           <div>
             <p className="text-sm font-medium text-muted-foreground">Skipped Records</p>
-            <p className="text-2xl font-bold text-destructive">{results.totalSkipped}</p>
+            <p className="text-2xl font-bold text-destructive dark:text-red-400">{results.totalSkipped}</p>
           </div>
         </div>
       </div>
@@ -93,10 +104,12 @@ export default function ResultsView({ results, onReset }: ResultsViewProps) {
         
         <div className="p-0 overflow-x-auto max-h-[500px]">
           {displayData.length === 0 ? (
-            <div className="p-16 text-center text-muted-foreground flex flex-col items-center justify-center">
-              <CheckCircle2 className="w-12 h-12 text-muted-foreground/30 mb-4" />
-              <p className="text-lg font-medium">No records to display.</p>
-              <p className="text-sm">You have zero {activeTab} records for this upload.</p>
+            <div className="p-12">
+               <EmptyState 
+                 icon={activeTab === 'imported' ? CheckCircle2 : XCircle}
+                 title="No records to display."
+                 description={`You have zero ${activeTab} records for this upload.`}
+               />
             </div>
           ) : (
             <table className="w-full text-sm text-left">
@@ -116,8 +129,8 @@ export default function ResultsView({ results, onReset }: ResultsViewProps) {
                 {displayData.map((row, idx) => (
                   <tr 
                     key={idx} 
-                    className={`transition-colors ${
-                      activeTab === 'skipped' ? 'bg-destructive/5 hover:bg-destructive/10' : 'hover:bg-muted/50'
+                    className={`transition-colors group ${
+                      activeTab === 'skipped' ? 'bg-destructive/5 dark:bg-destructive/10 hover:bg-destructive/10 dark:hover:bg-destructive/20' : 'hover:bg-primary/5 dark:hover:bg-primary/10'
                     }`}
                   >
                     {activeTab === 'skipped' && (

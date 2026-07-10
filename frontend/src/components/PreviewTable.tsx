@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileX } from 'lucide-react';
+import { EmptyState } from './ui/EmptyState';
 
 interface PreviewTableProps {
   data: any[];
@@ -10,8 +11,18 @@ export default function PreviewTable({ data }: PreviewTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const rowsPerPage = 100; // Limit rendering for performance
 
-  // If no data, render nothing
-  if (!data || data.length === 0) return null;
+  // If no data, render empty state
+  if (!data || data.length === 0) {
+    return (
+      <div className="mt-8">
+        <EmptyState 
+          icon={FileX}
+          title="No Data Found"
+          description="The CSV file was empty or could not be parsed correctly."
+        />
+      </div>
+    );
+  }
 
   // Extract column headers dynamically from the first row of JSON
   const columns = Object.keys(data[0]);
@@ -54,14 +65,14 @@ export default function PreviewTable({ data }: PreviewTableProps) {
             </thead>
             
             {/* TABLE BODY (Alternating Colors) */}
-            <tbody className="divide-y divide-border">
+            <tbody className="divide-y divide-border/50">
               {currentData.map((row, rowIndex) => (
                 <tr 
                   key={rowIndex} 
-                  className="hover:bg-primary/5 transition-colors even:bg-muted/10 odd:bg-card group"
+                  className="hover:bg-primary/5 dark:hover:bg-primary/10 transition-colors even:bg-muted/10 odd:bg-transparent group"
                 >
                   {/* Row Number Column (Sticky to left when scrolling horizontally) */}
-                  <td className="px-6 py-3 font-semibold text-muted-foreground border-r border-border/50 bg-card group-even:bg-muted/10 group-hover:bg-primary/5 transition-colors sticky left-0 z-10 text-center">
+                  <td className="px-6 py-3 font-semibold text-muted-foreground border-r border-border/50 bg-card/95 backdrop-blur-sm group-even:bg-muted/10 group-hover:bg-primary/5 dark:group-hover:bg-primary/10 transition-colors sticky left-0 z-10 text-center">
                     {startIndex + rowIndex + 1}
                   </td>
                   

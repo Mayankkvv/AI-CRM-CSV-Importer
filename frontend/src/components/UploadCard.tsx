@@ -1,22 +1,25 @@
 "use client";
 
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import PreviewTable from './PreviewTable';
 import ResultsView from './ResultsView';
 import axios from 'axios';
+import { toast } from 'sonner';
 
 export default function UploadCard() {
   const [isDragging, setIsDragging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<any[] | null>(null);
   
   const [isImporting, setIsImporting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   
-  // NEW: State to hold the final AI results from the backend
+  // NEW: State for live AI processing feedback
+  const [aiProgress, setAiProgress] = useState(0);
+  const [batchInfo, setBatchInfo] = useState({ current: 0, total: 0 });
+  
   const [apiResults, setApiResults] = useState<any | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -57,24 +60,23 @@ export default function UploadCard() {
         setParsedData(results.data);
       },
       error: (error: any) => {
-        setError(`Failed to parse CSV locally: ${error.message}`);
+        toast.error(`Failed to parse CSV locally: ${error.message}`);
       }
     });
   };
 
   const validateAndProcessFile = (file: File) => {
-    setError(null);
     setSelectedFile(null);
     setParsedData(null);
 
     if (file.type !== "text/csv" && !file.name.toLowerCase().endsWith(".csv")) {
-      setError("Invalid format. Please upload a valid CSV file.");
+      toast.error("Invalid format. Please upload a valid CSV file.");
       return;
     }
 
     const maxSizeInBytes = 10 * 1024 * 1024;
     if (file.size > maxSizeInBytes) {
-      setError("File is too large. Please upload a file under 10 MB.");
+      toast.error("File is too large. Please upload a file under 10 MB.");
       return;
     }
 
@@ -87,21 +89,37 @@ export default function UploadCard() {
     setSelectedFile(null);
     setParsedData(null);
     setUploadProgress(0);
-    setError(null);
+    setAiProgress(0);
+    setBatchInfo({ current: 0, total: 0 });
   };
 
   const handleConfirmImport = async () => {
     if (!selectedFile) return;
 
     setIsImporting(true);
-    setError(null);
     setUploadProgress(0);
+    setAiProgress(0);
+    setBatchInfo({ current: 0, total: 0 });
 
+    const jobId = Date.now().toString(); // Generate unique tracking ID
     const formData = new FormData();
     formData.append('csvFile', selectedFile);
 
+    // Deploy a background polling loop to ping the side-channel endpoint
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await axios.get(`http://localhost:5000/api/upload/progress/${jobId}`);
+        if (res.data) {
+          setAiProgress(res.data.progress || 0);
+          setBatchInfo({ current: res.data.currentBatch || 0, total: res.data.totalBatches || 0 });
+        }
+      } catch (e) {
+        // Silently ignore polling errors to avoid disrupting UI
+      }
+    }, 1000);
+
     try {
-      const response = await axios.post('http://localhost:5000/api/upload', formData, {
+      const response = await axios.post(`http://localhost:5000/api/upload?jobId=${jobId}`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -113,15 +131,18 @@ export default function UploadCard() {
         },
       });
 
-      // Save the final mapped data to state so we can display it!
+      clearInterval(pollInterval);
+      setAiProgress(100);
+      toast.success("AI Mapping complete!");
       setApiResults(response.data);
       
     } catch (err: any) {
       console.error("Upload failed:", err);
+      clearInterval(pollInterval);
       if (err.response && err.response.data && err.response.data.error) {
-        setError(`Backend Error: ${err.response.data.error}`);
+        toast.error(`Backend Error: ${err.response.data.error}`);
       } else {
-        setError('Failed to connect to the backend server.');
+        toast.error('Failed to connect to the backend server.');
       }
     } finally {
       setIsImporting(false);
@@ -211,13 +232,6 @@ export default function UploadCard() {
               </>
             )}
           </div>
-
-          {error && (
-            <div className="mt-5 p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-3 text-destructive text-sm font-medium animate-in slide-in-from-top-2">
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              {error}
-            </div>
-          )}
         </div>
       </div>
 
@@ -236,19 +250,31 @@ export default function UploadCard() {
               className="inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-85 bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 h-12 px-8 gap-2 shadow-md w-full sm:w-auto relative overflow-hidden"
             >
               {isImporting ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  {/* Smart UI text update: Change from Uploading to AI Mapping when file transfer finishes! */}
-                  {uploadProgress === 100 ? "AI Mapping in Progress..." : `Uploading... ${uploadProgress}%`}
+                <div className="flex flex-col items-center justify-center w-full relative z-10 py-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span className="font-semibold text-sm">
+                      {uploadProgress < 100 
+                        ? `Uploading File... ${uploadProgress}%` 
+                        : `AI Mapping... ${aiProgress}%`}
+                    </span>
+                  </div>
                   
+                  {uploadProgress === 100 && batchInfo.total > 0 && (
+                     <span className="text-[11px] font-medium text-white/80 tracking-wide uppercase">
+                       Batch {batchInfo.current} of {batchInfo.total}
+                     </span>
+                  )}
+                  
+                  {/* Progress Bar mapped seamlessly to upload then AI completion */}
                   <div 
-                    className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300" 
-                    style={{ width: `${uploadProgress}%` }}
+                    className="absolute bottom-0 left-0 h-1.5 bg-white/40 transition-all duration-500 ease-out" 
+                    style={{ width: `${uploadProgress < 100 ? uploadProgress : aiProgress}%` }}
                   ></div>
-                </>
+                </div>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />

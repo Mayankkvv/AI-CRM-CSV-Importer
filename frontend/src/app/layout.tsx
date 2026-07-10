@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import DashboardLayout from "@/components/layout/DashboardLayout";
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,13 +28,16 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full`}
     >
-      <body className="min-h-full flex flex-col font-sans">
-        {/* Wrap all our pages inside the new Dashboard Shell */}
-        <DashboardLayout>
-          {children}
-        </DashboardLayout>
+      <body className="min-h-full flex flex-col font-sans transition-colors duration-300">
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <DashboardLayout>
+            {children}
+          </DashboardLayout>
+          <Toaster richColors position="top-right" theme="system" />
+        </ThemeProvider>
       </body>
     </html>
   );
