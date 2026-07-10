@@ -6,6 +6,17 @@ const csv = require('csv-parser');
 const groq = require('../config/groq');
 const { getSystemPrompt } = require('../prompts/mappingPrompt');
 
+// In-memory store for tracking AI processing progress globally
+const progressStore = {};
+
+// GET /api/upload/progress/:jobId
+// Side-channel endpoint for the frontend to poll progress
+router.get('/progress/:jobId', (req, res) => {
+  const job = progressStore[req.params.jobId];
+  if (!job) return res.json({ progress: 0, currentBatch: 0, totalBatches: 0 });
+  res.json(job);
+});
+
 // POST /api/upload
 router.post('/', upload.single('csvFile'), (req, res) => {
   try {
@@ -41,6 +52,7 @@ router.post('/', upload.single('csvFile'), (req, res) => {
 
         const BATCH_SIZE = 50;
         const totalRecords = results.length;
+        const jobId = req.query.jobId; // Grab the Job ID from the URL
         
         let importedRecords = [];
         let allSkippedRecords = []; 
@@ -62,8 +74,6 @@ router.post('/', upload.single('csvFile'), (req, res) => {
 
             let parsed = JSON.parse(aiResponseString);
             
-            // SMART EXTRACTOR V3
-            // Safely extract the array regardless of how the AI wrapped it
             let mappedData = Array.isArray(parsed) ? parsed : (parsed.data || parsed.records || parsed.results);
             
             if (!mappedData || !Array.isArray(mappedData)) {
@@ -71,7 +81,7 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                if (possibleArray) {
                   mappedData = possibleArray;
                } else {
-                  mappedData = [parsed]; // Extreme fallback
+                  mappedData = [parsed];
                }
             }
 
@@ -94,11 +104,9 @@ router.post('/', upload.single('csvFile'), (req, res) => {
               const allEmails = parseList(record.email);
               const allPhones = parseList(record.phone);
 
-              // 1. Convert array of emails to a single string BEFORE evaluating if they exist!
               record.email = allEmails[0] || '';
               record.phone = allPhones[0] || '';
 
-              // 2. NOW Evaluate Skipping using the converted strings
               const hasEmail = record.email !== '';
               const hasPhone = record.phone !== '';
               
@@ -108,11 +116,9 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                 continue; 
               }
 
-              // 3. Validate CRM Status
               if (!VALID_STATUSES.includes(record.status)) record.status = 'Lead';
               if (!VALID_SOURCES.includes(record.source)) record.source = 'CSV_Import';
 
-              // 4. Overflow Data
               const extras = [];
               if (allEmails.length > 1) extras.push(`Extra Emails: ${allEmails.slice(1).join(', ')}`);
               if (allPhones.length > 1) extras.push(`Extra Phones: ${allPhones.slice(1).join(', ')}`);
@@ -122,7 +128,6 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                 record.crm_note = prevNote + extras.join(' | ');
               }
 
-              // 5. Dates
               for (const key in record) {
                 if (key.toLowerCase().includes('date') && typeof record[key] === 'string') {
                   const parsedDate = new Date(record[key]);
@@ -148,9 +153,20 @@ router.post('/', upload.single('csvFile'), (req, res) => {
         res.setHeader('Content-Type', 'application/json'); 
 
         try {
+          const totalBatches = Math.ceil(totalRecords / BATCH_SIZE);
+
           for (let i = 0; i < totalRecords; i += BATCH_SIZE) {
             const batch = results.slice(i, i + BATCH_SIZE);
             const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+            
+            // UPDATE GLOBAL PROGRESS FOR FRONTEND POLLING
+            if (jobId) {
+              progressStore[jobId] = {
+                progress: Math.round(((batchNumber - 1) / totalBatches) * 100),
+                currentBatch: batchNumber,
+                totalBatches: totalBatches
+              };
+            }
             
             try {
               const { valid, skipped } = await processBatchWithAI(batch);
@@ -171,15 +187,27 @@ router.post('/', upload.single('csvFile'), (req, res) => {
               allSkippedRecords = allSkippedRecords.concat(failedBatch);
             }
           }
+          
+          // SET 100% COMPLETE BEFORE RETURNING
+          if (jobId) {
+             progressStore[jobId] = { progress: 100, currentBatch: totalBatches, totalBatches };
+          }
 
-          return res.status(200).json({
+          const finalResponse = {
             message: 'CSV AI Mapping & Validation Complete!',
             totalOriginalRows: totalRecords,
             totalImported: importedRecords.length,
             totalSkipped: allSkippedRecords.length,
             data: importedRecords,
             skippedData: allSkippedRecords
-          });
+          };
+
+          res.status(200).json(finalResponse);
+          
+          // Clean up memory after sending response
+          if (jobId) {
+             setTimeout(() => delete progressStore[jobId], 5000); 
+          }
 
         } catch (fatalError) {
           console.error("Fatal error during batch processing:", fatalError);
