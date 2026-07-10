@@ -39,14 +39,11 @@ router.post('/', upload.single('csvFile'), (req, res) => {
           return res.status(400).json({ error: 'The uploaded CSV file is empty.' });
         }
 
-        // ==========================================
-        // BATCH PROCESSING AI MAPPING LOGIC
-        // ==========================================
         const BATCH_SIZE = 50;
         const totalRecords = results.length;
         
         let importedRecords = [];
-        let skippedRecordsCount = 0; 
+        let allSkippedRecords = []; 
 
         const processBatchWithAI = async (batch, attempt = 1) => {
           try {
@@ -63,52 +60,30 @@ router.post('/', upload.single('csvFile'), (req, res) => {
             const aiResponseString = chatCompletion.choices[0]?.message?.content;
             if (!aiResponseString) throw new Error("AI returned an empty response.");
 
-            let mappedData = JSON.parse(aiResponseString);
+            let parsed = JSON.parse(aiResponseString);
             
-            // Smart Extractor
-            if (typeof mappedData === 'object' && !Array.isArray(mappedData)) {
-               const possibleArray = Object.values(mappedData).find(val => Array.isArray(val));
+            // SMART EXTRACTOR V2
+            // Safely extract the array regardless of how the AI wrapped it
+            let mappedData = Array.isArray(parsed) ? parsed : (parsed.data || parsed.records || parsed.results);
+            
+            if (!mappedData || !Array.isArray(mappedData)) {
+               const possibleArray = Object.values(parsed).find(val => Array.isArray(val));
                if (possibleArray) {
                   mappedData = possibleArray;
                } else {
-                  mappedData = [mappedData];
+                  mappedData = [parsed]; // Extreme fallback
                }
             }
 
-            if (!Array.isArray(mappedData)) {
-               throw new Error("AI failed to return an array of records.");
-            }
-
-            // ==========================================
-            // STRICT BACKEND VALIDATION LAYER
-            // ==========================================
             const VALID_STATUSES = ['Lead', 'Contacted', 'Qualified', 'Customer', 'Lost'];
             const VALID_SOURCES = ['Organic', 'Paid', 'Referral', 'CSV_Import', 'Other'];
+            
             const validatedBatch = [];
+            const skippedBatch = [];
 
             for (let record of mappedData) {
               if (!record) continue;
 
-              // 1. Skip records without email AND phone
-              const hasEmail = typeof record.email === 'string' && record.email.trim() !== '';
-              const hasPhone = typeof record.phone === 'string' && record.phone.trim() !== '';
-              
-              if (!hasEmail && !hasPhone) {
-                // If it has neither, drop the record. (Will be counted as skipped later)
-                continue;
-              }
-
-              // 2. Validate CRM Status
-              if (!VALID_STATUSES.includes(record.status)) {
-                record.status = 'Lead'; // Force default
-              }
-
-              // 3. Validate Data Source
-              if (!VALID_SOURCES.includes(record.source)) {
-                record.source = 'CSV_Import'; // Force default
-              }
-
-              // 4. Move extra emails and phones to crm_note
               const parseList = (val) => {
                 if (!val) return [];
                 if (typeof val === 'string') return val.split(',').map(v => v.trim()).filter(Boolean);
@@ -122,6 +97,19 @@ router.post('/', upload.single('csvFile'), (req, res) => {
               record.email = allEmails[0] || '';
               record.phone = allPhones[0] || '';
 
+              // MUST EVALUATE SKIPPING AFTER PARSING/FORMATTING!
+              const hasEmail = record.email !== '';
+              const hasPhone = record.phone !== '';
+              
+              if (!hasEmail && !hasPhone) {
+                record._skipReason = "Missing Email and Phone";
+                skippedBatch.push(record);
+                continue; // Backend validation correctly drops it
+              }
+
+              if (!VALID_STATUSES.includes(record.status)) record.status = 'Lead';
+              if (!VALID_SOURCES.includes(record.source)) record.source = 'CSV_Import';
+
               const extras = [];
               if (allEmails.length > 1) extras.push(`Extra Emails: ${allEmails.slice(1).join(', ')}`);
               if (allPhones.length > 1) extras.push(`Extra Phones: ${allPhones.slice(1).join(', ')}`);
@@ -131,65 +119,62 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                 record.crm_note = prevNote + extras.join(' | ');
               }
 
-              // 5. Convert any Date fields into strict JavaScript ISO strings
               for (const key in record) {
                 if (key.toLowerCase().includes('date') && typeof record[key] === 'string') {
                   const parsedDate = new Date(record[key]);
-                  // Check if the date is valid before replacing the original string
-                  if (!isNaN(parsedDate.getTime())) {
-                    record[key] = parsedDate.toISOString(); 
-                  }
+                  if (!isNaN(parsedDate.getTime())) record[key] = parsedDate.toISOString(); 
                 }
               }
 
               validatedBatch.push(record);
             }
 
-            return validatedBatch; 
+            return { valid: validatedBatch, skipped: skippedBatch }; 
 
           } catch (error) {
             console.error(`[Attempt ${attempt} Failed]:`, error.message);
             if (attempt === 1) {
-              console.log("⚠️ Retrying Groq AI request...");
               return await processBatchWithAI(batch, 2);
             }
             throw new Error("Batch failed permanently after 2 attempts.");
           }
         };
 
-        // Execute batch sequentially
         res.setHeader('Content-Type', 'application/json'); 
 
         try {
           for (let i = 0; i < totalRecords; i += BATCH_SIZE) {
             const batch = results.slice(i, i + BATCH_SIZE);
             const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-            const totalBatches = Math.ceil(totalRecords / BATCH_SIZE);
-            
-            console.log(`Processing Batch ${batchNumber} of ${totalBatches}...`);
             
             try {
-              const mappedBatch = await processBatchWithAI(batch);
-              importedRecords = importedRecords.concat(mappedBatch);
+              const { valid, skipped } = await processBatchWithAI(batch);
+              importedRecords = importedRecords.concat(valid);
+              allSkippedRecords = allSkippedRecords.concat(skipped);
               
-              // Calculate exactly how many records were dropped by the AI or our Backend Validator
-              const droppedInThisBatch = batch.length - mappedBatch.length;
-              skippedRecordsCount += droppedInThisBatch;
+              // Handle rows that the AI completely dropped from the response array
+              const droppedCount = batch.length - (valid.length + skipped.length);
+              if (droppedCount > 0) {
+                for(let j=0; j<droppedCount; j++) {
+                  allSkippedRecords.push({ _skipReason: "AI inexplicably dropped this record." });
+                }
+              }
               
-              console.log(`✅ Batch ${batchNumber} Success! Mapped: ${mappedBatch.length} | Dropped: ${droppedInThisBatch}`);
+              console.log(`✅ Batch ${batchNumber} Success!`);
             } catch (batchError) {
-              console.error(`❌ Batch ${batchNumber} FAILED completely. Skipping ${batch.length} rows.`);
-              skippedRecordsCount += batch.length;
+              console.error(`❌ Batch ${batchNumber} FAILED completely.`);
+              const failedBatch = batch.map(b => ({ ...b, _skipReason: "AI Batch Processing Failed" }));
+              allSkippedRecords = allSkippedRecords.concat(failedBatch);
             }
           }
 
-          // Return Final Summary
           return res.status(200).json({
             message: 'CSV AI Mapping & Validation Complete!',
             totalOriginalRows: totalRecords,
             totalImported: importedRecords.length,
-            totalSkipped: skippedRecordsCount,
-            data: importedRecords
+            totalSkipped: allSkippedRecords.length,
+            data: importedRecords,
+            skippedData: allSkippedRecords
           });
 
         } catch (fatalError) {
