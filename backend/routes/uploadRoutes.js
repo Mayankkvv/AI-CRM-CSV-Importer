@@ -33,59 +33,74 @@ router.post('/', upload.single('csvFile'), (req, res) => {
         if (hasError) return; 
 
         console.log(`Successfully parsed ${results.length} rows on the backend.`);
-        fs.unlinkSync(req.file.path); // Clean up the temp file
+        fs.unlinkSync(req.file.path); 
 
         if (results.length === 0) {
           return res.status(400).json({ error: 'The uploaded CSV file is empty.' });
         }
 
         // ==========================================
-        // SINGLE RECORD AI MAPPING LOGIC
+        // SINGLE RECORD AI MAPPING (WITH RETRY LOGIC)
         // ==========================================
-        
-        // 1. Take only the very first chaotic row for testing
         const firstRecord = results[0];
 
-        try {
-          console.log("Sending first record to Groq AI...");
-          
-          // 2. Build and execute the API call
-          const chatCompletion = await groq.chat.completions.create({
-            messages: [
-              { role: "system", content: getSystemPrompt() },
-              { role: "user", content: JSON.stringify([firstRecord]) } // Wrap in array as expected by prompt
-            ],
-            model: "llama-3.1-8b-instant",
-            temperature: 0, // 0 = Rigid, logical, predictable (No creative hallucinations)
-            response_format: { type: "json_object" }, // Native SDK feature to guarantee JSON format
-          });
-
-          // 3. Receive the raw string response
-          const aiResponseString = chatCompletion.choices[0]?.message?.content;
-          
-          if (!aiResponseString) {
-            throw new Error("AI returned an empty response.");
-          }
-
-          // 4. Safely validate that the AI actually returned perfect JSON
-          let mappedData;
+        // 1. Validation & Retry Wrapper Function
+        const processWithAI = async (record, attempt = 1) => {
           try {
-            mappedData = JSON.parse(aiResponseString);
-          } catch (jsonError) {
-            console.error("CRITICAL ERROR: AI returned invalid JSON syntax.", aiResponseString);
-            return res.status(500).json({ error: 'AI failed to return valid JSON syntax.' });
-          }
+            console.log(`[Attempt ${attempt}] Sending record to Groq AI...`);
+            
+            const chatCompletion = await groq.chat.completions.create({
+              messages: [
+                { role: "system", content: getSystemPrompt() },
+                { role: "user", content: JSON.stringify([record]) } 
+              ],
+              model: "llama-3.1-8b-instant",
+              temperature: 0, 
+              response_format: { type: "json_object" }, 
+            });
 
-          // 5. Return both the original and the new mapped data back to the frontend!
+            const aiResponseString = chatCompletion.choices[0]?.message?.content;
+            
+            if (!aiResponseString) {
+              throw new Error("AI returned an empty response.");
+            }
+
+            // 2. The Validation Layer: If this fails, it jumps instantly to the catch block
+            const mappedData = JSON.parse(aiResponseString);
+            
+            // If we get here, the JSON is perfect!
+            return mappedData; 
+
+          } catch (error) {
+            console.error(`[Attempt ${attempt} Failed]:`, error.message);
+            
+            // 3. Retry Logic: If we are on attempt 1, try exactly one more time
+            if (attempt === 1) {
+              console.log("⚠️ Retrying Groq AI request to recover from invalid JSON...");
+              return await processWithAI(record, 2);
+            }
+            
+            // If we already retried and failed again, throw the error up to the main route handler
+            throw new Error("AI continuously returned invalid JSON or failed to respond.");
+          }
+        };
+
+        // Execute the robust AI process
+        try {
+          const mappedData = await processWithAI(firstRecord);
+
           return res.status(200).json({
             message: 'First record mapped successfully!',
-            originalRecord: firstRecord, // Helpful for debugging on the frontend
-            mappedData: mappedData       // The beautiful, clean CRM data
+            originalRecord: firstRecord,
+            mappedData: mappedData
           });
 
-        } catch (aiError) {
-          console.error("Groq AI Mapping Error:", aiError);
-          return res.status(500).json({ error: 'Failed to map data with Groq AI.' });
+        } catch (finalError) {
+          console.error("❌ Groq AI Mapping Error (After Retries):", finalError.message);
+          return res.status(500).json({ 
+            error: 'Failed to map data with AI after multiple attempts.',
+            details: finalError.message
+          });
         }
       });
 
