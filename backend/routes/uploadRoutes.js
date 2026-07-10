@@ -40,19 +40,21 @@ router.post('/', upload.single('csvFile'), (req, res) => {
         }
 
         // ==========================================
-        // SINGLE RECORD AI MAPPING (WITH RETRY LOGIC)
+        // BATCH PROCESSING AI MAPPING LOGIC
         // ==========================================
-        const firstRecord = results[0];
+        const BATCH_SIZE = 50;
+        const totalRecords = results.length;
+        
+        let importedRecords = [];
+        let skippedRecordsCount = 0; 
 
-        // 1. Validation & Retry Wrapper Function
-        const processWithAI = async (record, attempt = 1) => {
+        // 1. Validation & Retry Wrapper Function (Now processes Arrays!)
+        const processBatchWithAI = async (batch, attempt = 1) => {
           try {
-            console.log(`[Attempt ${attempt}] Sending record to Groq AI...`);
-            
             const chatCompletion = await groq.chat.completions.create({
               messages: [
                 { role: "system", content: getSystemPrompt() },
-                { role: "user", content: JSON.stringify([record]) } 
+                { role: "user", content: JSON.stringify(batch) } 
               ],
               model: "llama-3.1-8b-instant",
               temperature: 0, 
@@ -60,47 +62,76 @@ router.post('/', upload.single('csvFile'), (req, res) => {
             });
 
             const aiResponseString = chatCompletion.choices[0]?.message?.content;
+            if (!aiResponseString) throw new Error("AI returned an empty response.");
+
+            let mappedData = JSON.parse(aiResponseString);
             
-            if (!aiResponseString) {
-              throw new Error("AI returned an empty response.");
+            // SMART EXTRACTOR: 
+            // Because `json_object` mode forces the AI to return an object {}, 
+            // it often wraps our requested array inside a key like { "data": [...] }
+            if (typeof mappedData === 'object' && !Array.isArray(mappedData)) {
+               const possibleArray = Object.values(mappedData).find(val => Array.isArray(val));
+               if (possibleArray) {
+                  mappedData = possibleArray;
+               } else {
+                  mappedData = [mappedData]; // Fallback if it returned just one single object
+               }
             }
 
-            // 2. The Validation Layer: If this fails, it jumps instantly to the catch block
-            const mappedData = JSON.parse(aiResponseString);
-            
-            // If we get here, the JSON is perfect!
+            if (!Array.isArray(mappedData)) {
+               throw new Error("AI failed to return an array of records.");
+            }
+
             return mappedData; 
 
           } catch (error) {
             console.error(`[Attempt ${attempt} Failed]:`, error.message);
             
-            // 3. Retry Logic: If we are on attempt 1, try exactly one more time
             if (attempt === 1) {
-              console.log("⚠️ Retrying Groq AI request to recover from invalid JSON...");
-              return await processWithAI(record, 2);
+              console.log("⚠️ Retrying Groq AI request for this batch...");
+              return await processBatchWithAI(batch, 2);
             }
             
-            // If we already retried and failed again, throw the error up to the main route handler
-            throw new Error("AI continuously returned invalid JSON or failed to respond.");
+            throw new Error("Batch failed permanently after 2 attempts.");
           }
         };
 
-        // Execute the robust AI process
+        // 2. Process Sequentially using a For Loop
+        // We do NOT use Promise.all() here because sending 50 parallel requests would trigger Rate Limits!
+        res.setHeader('Content-Type', 'application/json'); // Keep connection alive
+
         try {
-          const mappedData = await processWithAI(firstRecord);
+          for (let i = 0; i < totalRecords; i += BATCH_SIZE) {
+            const batch = results.slice(i, i + BATCH_SIZE);
+            const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+            const totalBatches = Math.ceil(totalRecords / BATCH_SIZE);
+            
+            console.log(`Processing Batch ${batchNumber} of ${totalBatches} (${batch.length} rows)...`);
+            
+            try {
+              // Wait for this batch to finish before sending the next one
+              const mappedBatch = await processBatchWithAI(batch);
+              importedRecords = importedRecords.concat(mappedBatch);
+              console.log(`✅ Batch ${batchNumber} Success! Mapped ${mappedBatch.length} records.`);
+            } catch (batchError) {
+              // Fault Tolerance: If this specific chunk fails twice, skip it and continue!
+              console.error(`❌ Batch ${batchNumber} FAILED completely. Skipping ${batch.length} rows.`);
+              skippedRecordsCount += batch.length;
+            }
+          }
 
+          // 3. Return the Final Summary!
           return res.status(200).json({
-            message: 'First record mapped successfully!',
-            originalRecord: firstRecord,
-            mappedData: mappedData
+            message: 'CSV AI Mapping Complete!',
+            totalOriginalRows: totalRecords,
+            totalImported: importedRecords.length,
+            totalSkipped: skippedRecordsCount,
+            data: importedRecords
           });
 
-        } catch (finalError) {
-          console.error("❌ Groq AI Mapping Error (After Retries):", finalError.message);
-          return res.status(500).json({ 
-            error: 'Failed to map data with AI after multiple attempts.',
-            details: finalError.message
-          });
+        } catch (fatalError) {
+          console.error("Fatal error during batch processing:", fatalError);
+          return res.status(500).json({ error: 'Fatal error occurred during batch processing.' });
         }
       });
 
