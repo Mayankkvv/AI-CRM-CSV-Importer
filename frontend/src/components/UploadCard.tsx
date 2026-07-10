@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { UploadCloud, FileText, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import PreviewTable from './PreviewTable';
+import axios from 'axios';
 
 export default function UploadCard() {
   const [isDragging, setIsDragging] = useState(false);
@@ -11,8 +12,9 @@ export default function UploadCard() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<any[] | null>(null);
   
-  // NEW: State to track if we are currently sending data to the backend
   const [isImporting, setIsImporting] = useState(false);
+  // NEW: State to track upload progress (0 to 100)
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,7 +54,7 @@ export default function UploadCard() {
         setParsedData(results.data);
       },
       error: (error: any) => {
-        setError(`Failed to parse CSV: ${error.message}`);
+        setError(`Failed to parse CSV locally: ${error.message}`);
       }
     });
   };
@@ -74,18 +76,51 @@ export default function UploadCard() {
     }
 
     setSelectedFile(file);
-    parseCSV(file);
+    parseCSV(file); // Local preview parse
   };
 
-  // NEW: Simulate the backend API call to trigger the loading state
-  const handleConfirmImport = () => {
-    setIsImporting(true); // Triggers the spinner and disables buttons
-    
-    // Fake a 2.5 second network delay
-    setTimeout(() => {
+  // --- CONNECTING TO THE BACKEND ---
+  const handleConfirmImport = async () => {
+    if (!selectedFile) return;
+
+    setIsImporting(true);
+    setError(null);
+    setUploadProgress(0);
+
+    // Package the file exactly how the browser's form submission would
+    const formData = new FormData();
+    formData.append('csvFile', selectedFile);
+
+    try {
+      // Send the POST request to our Express server
+      const response = await axios.post('http://localhost:5000/api/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        // Axios magic: track exactly how much data has been sent
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+          }
+        },
+      });
+
+      console.log("Success! Backend responded:", response.data);
+      alert(`Success! Backend safely parsed ${response.data.totalRows} rows.`);
+      
+    } catch (err: any) {
+      console.error("Upload failed:", err);
+      // Graceful error handling: Show backend error if it exists, otherwise show a generic connection error
+      if (err.response && err.response.data && err.response.data.error) {
+        setError(`Backend Error: ${err.response.data.error}`);
+      } else {
+        setError('Failed to connect to the backend server. Is it running on port 5000?');
+      }
+    } finally {
       setIsImporting(false);
-      // We will replace this setTimeout with our real Express/Groq API call later!
-    }, 2500);
+      setUploadProgress(0); // Reset for the next upload
+    }
   };
 
   return (
@@ -132,11 +167,11 @@ export default function UploadCard() {
                   File Ready: {selectedFile.name}
                 </h3>
                 <p className="text-sm font-medium text-muted-foreground mb-6">
-                  {parsedData ? `Successfully parsed ${parsedData.length} rows` : "Parsing data..."}
+                  {parsedData ? `Successfully parsed ${parsedData.length} rows locally` : "Parsing data..."}
                 </p>
                 <button 
                   onClick={handleBrowseClick}
-                  disabled={isImporting} // Disabled while loading
+                  disabled={isImporting}
                   className="text-sm font-semibold text-primary hover:text-primary/80 hover:underline transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 >
                   Choose a different file
@@ -175,13 +210,10 @@ export default function UploadCard() {
         </div>
       </div>
 
-      {/* THE DATA TABLE & ACTIONS FOOTER */}
       {parsedData && (
         <div className="animate-in fade-in duration-500">
-          
           <PreviewTable data={parsedData} />
           
-          {/* NEW: Import Actions Footer */}
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-between bg-card border shadow-sm rounded-2xl p-6">
             <div className="text-sm text-muted-foreground mb-4 sm:mb-0">
               Please review your data in the table above before importing.
@@ -192,14 +224,20 @@ export default function UploadCard() {
               disabled={!parsedData || isImporting}
               className="inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-85 bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 h-12 px-8 gap-2 shadow-md w-full sm:w-auto relative overflow-hidden"
             >
+              {/* Dynamic UI based on loading state */}
               {isImporting ? (
                 <>
-                  {/* Professional SVG Spinner */}
                   <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Processing via AI...
+                  Uploading... {uploadProgress}%
+                  
+                  {/* Subtle Progress Bar overlay at the bottom of the button */}
+                  <div 
+                    className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300" 
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
                 </>
               ) : (
                 <>

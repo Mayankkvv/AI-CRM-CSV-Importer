@@ -6,6 +6,9 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 // Initialize the Express application
+// Import Routes
+const uploadRoutes = require('./routes/uploadRoutes');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -22,6 +25,9 @@ app.use(express.json());
 // ==========================================
 // ROUTES
 // ==========================================
+
+// Mount the CSV upload endpoint
+app.use('/api/upload', uploadRoutes);
 
 // A simple Health Check route to verify our server is running correctly
 app.get('/api/health', (req, res) => {
