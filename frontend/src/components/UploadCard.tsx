@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { UploadCloud, FileText, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import PreviewTable from './PreviewTable';
+import ResultsView from './ResultsView';
 import axios from 'axios';
 
 export default function UploadCard() {
@@ -13,8 +14,10 @@ export default function UploadCard() {
   const [parsedData, setParsedData] = useState<any[] | null>(null);
   
   const [isImporting, setIsImporting] = useState(false);
-  // NEW: State to track upload progress (0 to 100)
   const [uploadProgress, setUploadProgress] = useState(0);
+  
+  // NEW: State to hold the final AI results from the backend
+  const [apiResults, setApiResults] = useState<any | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,10 +79,17 @@ export default function UploadCard() {
     }
 
     setSelectedFile(file);
-    parseCSV(file); // Local preview parse
+    parseCSV(file); 
   };
 
-  // --- CONNECTING TO THE BACKEND ---
+  const resetApp = () => {
+    setApiResults(null);
+    setSelectedFile(null);
+    setParsedData(null);
+    setUploadProgress(0);
+    setError(null);
+  };
+
   const handleConfirmImport = async () => {
     if (!selectedFile) return;
 
@@ -87,17 +97,14 @@ export default function UploadCard() {
     setError(null);
     setUploadProgress(0);
 
-    // Package the file exactly how the browser's form submission would
     const formData = new FormData();
     formData.append('csvFile', selectedFile);
 
     try {
-      // Send the POST request to our Express server
       const response = await axios.post('http://localhost:5000/api/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        // Axios magic: track exactly how much data has been sent
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -106,22 +113,26 @@ export default function UploadCard() {
         },
       });
 
-      console.log("Success! Backend responded:", response.data);
-      alert(`Success! Backend safely parsed ${response.data.totalRows} rows.`);
+      // Save the final mapped data to state so we can display it!
+      setApiResults(response.data);
       
     } catch (err: any) {
       console.error("Upload failed:", err);
-      // Graceful error handling: Show backend error if it exists, otherwise show a generic connection error
       if (err.response && err.response.data && err.response.data.error) {
         setError(`Backend Error: ${err.response.data.error}`);
       } else {
-        setError('Failed to connect to the backend server. Is it running on port 5000?');
+        setError('Failed to connect to the backend server.');
       }
     } finally {
       setIsImporting(false);
-      setUploadProgress(0); // Reset for the next upload
+      setUploadProgress(0); 
     }
   };
+
+  // If we have AI results, render the beautiful Results Dashboard instead of the upload form
+  if (apiResults) {
+    return <ResultsView results={apiResults} onReset={resetApp} />;
+  }
 
   return (
     <div className={`w-full mx-auto transition-all duration-700 ease-in-out ${parsedData ? 'max-w-6xl' : 'max-w-2xl'}`}>
@@ -224,16 +235,15 @@ export default function UploadCard() {
               disabled={!parsedData || isImporting}
               className="inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-85 bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 h-12 px-8 gap-2 shadow-md w-full sm:w-auto relative overflow-hidden"
             >
-              {/* Dynamic UI based on loading state */}
               {isImporting ? (
                 <>
                   <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Uploading... {uploadProgress}%
+                  {/* Smart UI text update: Change from Uploading to AI Mapping when file transfer finishes! */}
+                  {uploadProgress === 100 ? "AI Mapping in Progress..." : `Uploading... ${uploadProgress}%`}
                   
-                  {/* Subtle Progress Bar overlay at the bottom of the button */}
                   <div 
                     className="absolute bottom-0 left-0 h-1 bg-white/40 transition-all duration-300" 
                     style={{ width: `${uploadProgress}%` }}
