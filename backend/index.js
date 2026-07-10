@@ -35,7 +35,7 @@ app.get('/test-ai', async (req, res) => {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: "user", content: "Reply with the exact word CONNECTED" }],
-      model: "llama3-8b-8192", // Fast, standard model for testing
+      model: "llama-3.1-8b-instant", // Updated to the latest active fast model
       temperature: 0,
       max_tokens: 10,
     });
