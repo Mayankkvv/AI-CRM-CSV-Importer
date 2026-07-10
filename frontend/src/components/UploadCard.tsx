@@ -2,80 +2,88 @@
 
 import React, { useState, useRef } from 'react';
 import { UploadCloud, FileText, AlertCircle, CheckCircle2 } from 'lucide-react';
+import Papa from 'papaparse';
 
 export default function UploadCard() {
   // --- STATE ---
-  // Tracks if a file is currently hovering over the drop zone
   const [isDragging, setIsDragging] = useState(false);
-  // Holds any validation error messages
   const [error, setError] = useState<string | null>(null);
-  // Holds the successfully validated file
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  
+  // NEW: State to hold our perfectly parsed JSON data
+  const [parsedData, setParsedData] = useState<any[] | null>(null);
 
-  // A reference to remotely click the hidden HTML file input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- EVENTS ---
-  
-  // 1. Fires continuously while dragging over the box
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault(); // Stop browser from opening the file
-    setIsDragging(true); // Trigger our active UI state
+    e.preventDefault(); 
+    setIsDragging(true);
   };
 
-  // 2. Fires when dragging away from the box
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    setIsDragging(false); // Revert UI
+    setIsDragging(false); 
   };
 
-  // 3. Fires when the user lets go of the mouse to drop the file
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
     
-    // Grab the dropped files
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       validateAndProcessFile(files[0]);
     }
   };
 
-  // 4. Opens the hidden OS file browser
   const handleBrowseClick = () => {
     fileInputRef.current?.click();
   };
 
-  // 5. Fires when a file is selected from the OS file browser
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       validateAndProcessFile(files[0]);
     }
-    // Reset input so they can re-select the same file if needed
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // --- PARSING ---
+  // NEW: Function to convert the CSV file into a JSON array
+  const parseCSV = (file: File) => {
+    Papa.parse(file, {
+      header: true, // Converts rows into JSON objects using the first row as keys
+      skipEmptyLines: true, // Ignores trailing blank lines
+      complete: (results) => {
+        console.log("Successfully parsed CSV into JSON:", results.data);
+        setParsedData(results.data); // Save the JSON array to React state
+      },
+      error: (error: any) => {
+        setError(`Failed to parse CSV: ${error.message}`);
+      }
+    });
   };
 
   // --- VALIDATION ---
   const validateAndProcessFile = (file: File) => {
     setError(null);
     setSelectedFile(null);
+    setParsedData(null); // Reset any old parsed data
 
-    // Validate File Type
     if (file.type !== "text/csv" && !file.name.toLowerCase().endsWith(".csv")) {
       setError("Invalid format. Please upload a valid CSV file.");
       return;
     }
 
-    // Validate File Size (10 MB)
     const maxSizeInBytes = 10 * 1024 * 1024;
     if (file.size > maxSizeInBytes) {
       setError("File is too large. Please upload a file under 10 MB.");
       return;
     }
 
-    // Success! Save the file to state
+    // Success! Save the file AND start parsing it immediately
     setSelectedFile(file);
+    parseCSV(file);
   };
 
   return (
@@ -92,7 +100,6 @@ export default function UploadCard() {
             </p>
           </div>
 
-          {/* Interactive Drop Zone */}
           <div 
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -100,12 +107,11 @@ export default function UploadCard() {
             className={`
               relative border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center transition-all duration-300
               ${isDragging 
-                ? "border-primary bg-primary/5 scale-[1.02]" // Active Drag State
-                : "border-muted-foreground/25 bg-muted/20 hover:bg-muted/40 hover:border-primary/50" // Normal State
+                ? "border-primary bg-primary/5 scale-[1.02]" 
+                : "border-muted-foreground/25 bg-muted/20 hover:bg-muted/40 hover:border-primary/50" 
               }
             `}
           >
-            {/* Hidden File Input */}
             <input 
               type="file" 
               accept=".csv" 
@@ -123,9 +129,12 @@ export default function UploadCard() {
                 <h3 className="text-lg font-bold text-foreground mb-1">
                   File Ready: {selectedFile.name}
                 </h3>
+                
+                {/* NEW: Show the user how many rows we successfully parsed! */}
                 <p className="text-sm font-medium text-muted-foreground mb-6">
-                  {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                  {parsedData ? `Successfully parsed ${parsedData.length} rows` : "Parsing data..."}
                 </p>
+                
                 <button 
                   onClick={handleBrowseClick}
                   className="text-sm font-semibold text-primary hover:text-primary/80 hover:underline transition-colors"
@@ -160,7 +169,6 @@ export default function UploadCard() {
             )}
           </div>
 
-          {/* ERROR MESSAGE DISPLAY */}
           {error && (
             <div className="mt-5 p-3 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center gap-3 text-destructive text-sm font-medium animate-in slide-in-from-top-2">
               <AlertCircle className="w-5 h-5 shrink-0" />
@@ -168,7 +176,6 @@ export default function UploadCard() {
             </div>
           )}
 
-          {/* Footer */}
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-between text-xs font-medium text-muted-foreground px-2">
             <div className="flex items-center gap-1.5">
               <FileText className="w-4 h-4" />
