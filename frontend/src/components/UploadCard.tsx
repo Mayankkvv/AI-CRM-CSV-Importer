@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileText, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, FileText, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
 import Papa from 'papaparse';
 import PreviewTable from './PreviewTable';
 
@@ -10,6 +10,9 @@ export default function UploadCard() {
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<any[] | null>(null);
+  
+  // NEW: State to track if we are currently sending data to the backend
+  const [isImporting, setIsImporting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,11 +77,20 @@ export default function UploadCard() {
     parseCSV(file);
   };
 
+  // NEW: Simulate the backend API call to trigger the loading state
+  const handleConfirmImport = () => {
+    setIsImporting(true); // Triggers the spinner and disables buttons
+    
+    // Fake a 2.5 second network delay
+    setTimeout(() => {
+      setIsImporting(false);
+      // We will replace this setTimeout with our real Express/Groq API call later!
+    }, 2500);
+  };
+
   return (
-    /* We dynamically expand the width from 2xl to 6xl if parsed data exists so the table fits beautifully! */
     <div className={`w-full mx-auto transition-all duration-700 ease-in-out ${parsedData ? 'max-w-6xl' : 'max-w-2xl'}`}>
       
-      {/* Upload Card */}
       <div className="relative group rounded-3xl bg-card border shadow-sm transition-all hover:shadow-md overflow-hidden">
         <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-primary via-purple-400 to-primary/50"></div>
         
@@ -124,7 +136,8 @@ export default function UploadCard() {
                 </p>
                 <button 
                   onClick={handleBrowseClick}
-                  className="text-sm font-semibold text-primary hover:text-primary/80 hover:underline transition-colors"
+                  disabled={isImporting} // Disabled while loading
+                  className="text-sm font-semibold text-primary hover:text-primary/80 hover:underline transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 >
                   Choose a different file
                 </button>
@@ -162,8 +175,43 @@ export default function UploadCard() {
         </div>
       </div>
 
-      {/* THE BRAND NEW DATA TABLE (Only renders if parsedData exists) */}
-      {parsedData && <PreviewTable data={parsedData} />}
+      {/* THE DATA TABLE & ACTIONS FOOTER */}
+      {parsedData && (
+        <div className="animate-in fade-in duration-500">
+          
+          <PreviewTable data={parsedData} />
+          
+          {/* NEW: Import Actions Footer */}
+          <div className="mt-6 flex flex-col sm:flex-row items-center justify-between bg-card border shadow-sm rounded-2xl p-6">
+            <div className="text-sm text-muted-foreground mb-4 sm:mb-0">
+              Please review your data in the table above before importing.
+            </div>
+            
+            <button 
+              onClick={handleConfirmImport}
+              disabled={!parsedData || isImporting}
+              className="inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-85 bg-primary text-primary-foreground hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 h-12 px-8 gap-2 shadow-md w-full sm:w-auto relative overflow-hidden"
+            >
+              {isImporting ? (
+                <>
+                  {/* Professional SVG Spinner */}
+                  <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Processing via AI...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Confirm & Map with AI
+                </>
+              )}
+            </button>
+          </div>
+          
+        </div>
+      )}
       
     </div>
   );
