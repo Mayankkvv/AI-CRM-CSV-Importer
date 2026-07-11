@@ -85,7 +85,7 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                }
             }
 
-            const VALID_STATUSES = ['Lead', 'Contacted', 'Qualified', 'Customer', 'Lost'];
+            const VALID_STATUSES = ['GOOD_LEAD_FOLLOW_UP', 'DID_NOT_CONNECT', 'BAD_LEAD', 'SALE_DONE'];
             const VALID_SOURCES = ['Organic', 'Paid', 'Referral', 'CSV_Import', 'Other'];
             
             const validatedBatch = [];
@@ -102,23 +102,68 @@ router.post('/', upload.single('csvFile'), (req, res) => {
               };
 
               const allEmails = parseList(record.email);
-              const allPhones = parseList(record.phone);
+              const allPhones = parseList(record.phone || record.mobile_number);
 
               record.email = allEmails[0] || '';
-              record.phone = allPhones[0] || '';
+              record.phone = allPhones[0] || ''; // Stored as 'phone' for frontend compatibility
 
               const hasEmail = record.email !== '';
               const hasPhone = record.phone !== '';
               
               if (!hasEmail && !hasPhone) {
-                record._skipReason = "Missing Email and Phone";
+                record._skipReason = "Missing both Email and Mobile Number";
                 skippedBatch.push(record);
                 continue; 
               }
 
-              if (!VALID_STATUSES.includes(record.status)) record.status = 'Lead';
-              if (!VALID_SOURCES.includes(record.source)) record.source = 'CSV_Import';
+              // 1. Validate CRM Status
+              let status = record.status || record.crm_status;
+              let isStatusValid = VALID_STATUSES.includes(status);
+              
+              if (!isStatusValid && status) {
+                 // Try to correct invalid statuses
+                 const s = String(status).toUpperCase().replace(/ /g, '_');
+                 if (VALID_STATUSES.includes(s)) {
+                    status = s;
+                    isStatusValid = true;
+                 } else if (s.includes('GOOD') || s.includes('QUALIFIED')) {
+                    status = 'GOOD_LEAD_FOLLOW_UP';
+                    isStatusValid = true;
+                 } else if (s.includes('SALE') || s.includes('CUSTOMER')) {
+                    status = 'SALE_DONE';
+                    isStatusValid = true;
+                 } else if (s.includes('BAD') || s.includes('LOST')) {
+                    status = 'BAD_LEAD';
+                    isStatusValid = true;
+                 } else if (s.includes('CONNECT')) {
+                    status = 'DID_NOT_CONNECT';
+                    isStatusValid = true;
+                 }
+              }
 
+              if (!isStatusValid) {
+                  record._skipReason = "Invalid or uncorrectable crm_status";
+                  skippedBatch.push(record);
+                  continue;
+              }
+              record.status = status; // Map back to status for the frontend UI
+
+              // 2. Validate Data Source
+              let source = record.data_source || record.source;
+              if (source && !VALID_SOURCES.includes(source)) {
+                 // Try to correct (case-insensitive match)
+                 const s = String(source);
+                 const matched = VALID_SOURCES.find(v => v.toLowerCase() === s.toLowerCase());
+                 if (matched) {
+                    source = matched;
+                 } else {
+                    source = ''; // Leave data_source empty if uncertain
+                 }
+              }
+              record.data_source = source || '';
+              record.source = record.data_source; // Map back for frontend
+
+              // 3. Overflow Data
               const extras = [];
               if (allEmails.length > 1) extras.push(`Extra Emails: ${allEmails.slice(1).join(', ')}`);
               if (allPhones.length > 1) extras.push(`Extra Phones: ${allPhones.slice(1).join(', ')}`);
@@ -128,11 +173,23 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                 record.crm_note = prevNote + extras.join(' | ');
               }
 
+              // 4. Validate created_at
+              let hasInvalidDate = false;
               for (const key in record) {
-                if (key.toLowerCase().includes('date') && typeof record[key] === 'string') {
+                if ((key === 'created_at' || key.toLowerCase().includes('date')) && typeof record[key] === 'string' && record[key].trim() !== '') {
                   const parsedDate = new Date(record[key]);
-                  if (!isNaN(parsedDate.getTime())) record[key] = parsedDate.toISOString(); 
+                  if (!isNaN(parsedDate.getTime())) {
+                    record[key] = parsedDate.toISOString(); 
+                  } else if (key === 'created_at') {
+                    hasInvalidDate = true;
+                  }
                 }
+              }
+              
+              if (hasInvalidDate) {
+                  record._skipReason = "Invalid created_at format";
+                  skippedBatch.push(record);
+                  continue;
               }
 
               validatedBatch.push(record);
