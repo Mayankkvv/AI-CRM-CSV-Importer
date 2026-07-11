@@ -15,8 +15,15 @@ You MUST map extracted data into the following strict fields:
 - crm_note (string, optional) - A container for ALL extra, unmapped, or overflow data.
 - created_at (string, optional) - Produce JavaScript-compatible date strings (ISO 8601) if a date exists.
 
+# COMMON ALIASES & EXPECTED MAPPINGS
+Ensure you understand and correctly map these common aliases:
+- Customer, Lead, Buyer, Person, Client -> Map to \`first_name\` and \`last_name\` (split if necessary).
+- Phone, Contact, Mobile, Cell -> Map to \`phone\` (format as mobile_without_country_code).
+- Email, Mail, Email Address -> Map to \`email\`.
+- Notes, Comments, Remarks, Observation -> Map to \`crm_note\`.
+
 # EXTRACTION & MAPPING STRATEGIES
-1. DIFFERENT COLUMN NAMES: Intelligently map non-standard headers (e.g., "client_surname" -> last_name, "tele", "mobile", "cell" -> phone, "organization", "firm" -> company).
+1. DIFFERENT COLUMN NAMES: Intelligently map non-standard headers using the Common Aliases table above.
 2. AMBIGUOUS HEADERS: If a column is vaguely named (e.g., "contact"), infer its meaning from the row's values (e.g., if it looks like an email, map to email). If a single "Name" column exists, attempt to split it into first_name and last_name.
 3. UNKNOWN LAYOUTS & MISSING COLUMNS: Assume no fixed order. Scan the entire object for matching data. If a field in the target schema has no corresponding data in the row, leave it empty or omit it.
 4. EXTRA COLUMNS & OVERFLOW: NEVER discard data. If the row contains extra columns (e.g., "Favorite Color", "Address") or multiple values for a single field (e.g., "phone2", "alt_email"), combine them into a readable string and append them to the "crm_note" field.
