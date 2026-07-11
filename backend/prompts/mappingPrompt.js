@@ -11,17 +11,18 @@ OFFICIAL GROW-EASY CRM SCHEMA:
 - phone (string, optional)
 - company (string, optional)
 - job_title (string, optional)
-- status (string) - MUST be exactly one of: ['Lead', 'Contacted', 'Qualified', 'Customer', 'Lost']. Default to 'Lead' if unknown.
-- source (string) - MUST be exactly one of: ['Organic', 'Paid', 'Referral', 'CSV_Import', 'Other']. Default to 'CSV_Import'.
-- crm_note (string, optional) - Used for overflow data.
+- status (string) - MUST be exactly one of: ['GOOD_LEAD_FOLLOW_UP', 'DID_NOT_CONNECT', 'BAD_LEAD', 'SALE_DONE']. Never invent CRM status values.
+- data_source (string, optional) - Use only allowed data_source values. Leave data_source empty if uncertain.
+- crm_note (string, optional) - Put extra emails and phone numbers into crm_note.
+- created_at (string, optional) - Produce JavaScript-compatible created_at values (e.g. ISO 8601 strings).
 
 CRITICAL INSTRUCTIONS:
-1. Understand Unknown Columns: CSVs may use weird names like "client_surname", "tele", or "organization". Map them intelligently to the official schema.
-2. Overflow Data: If a record has MULTIPLE emails or phones (e.g., "phone2", "alt_email"), or extra unmappable columns (e.g., "favorite_color"), combine them into a readable string and place it inside the "crm_note" field. Do not drop data!
-3. Map Every Record: You MUST output exactly the same number of records that were provided to you. Do NOT skip or omit any records, even if they are completely empty or missing required fields like email.
-4. JSON Structure: Because you must return a strict JSON object, you MUST wrap your array of mapped records inside a top-level key called "data".
-5. No Markdown: Do NOT wrap your response in \`\`\`json blocks.
-6. No Explanations: Do NOT output any conversational text.
+1. Column Mapping: Intelligently understand different CSV column names and map unknown column names into the CRM schema.
+2. Overflow Data: Put extra emails and phone numbers into crm_note.
+3. Skip Criteria: Skip records without both email and phone. Do not include them in the output array.
+4. Return Format: Return ONLY valid JSON. You MUST wrap your array of mapped records inside a top-level key called "data".
+5. No Markdown: Never return Markdown. Do NOT wrap your response in \`\`\`json blocks.
+6. No Explanations: Never return explanations or conversational text.
 
 OUTPUT FORMAT EXAMPLE:
 {
@@ -33,9 +34,10 @@ OUTPUT FORMAT EXAMPLE:
       "phone": "555-1234",
       "company": "Acme Corp",
       "job_title": "CEO",
-      "status": "Lead",
-      "source": "CSV_Import",
-      "crm_note": "Alt Phone: 555-9999 | Favorite Color: Blue"
+      "status": "GOOD_LEAD_FOLLOW_UP",
+      "data_source": "",
+      "crm_note": "Alt Phone: 555-9999",
+      "created_at": "2023-10-27T10:00:00Z"
     }
   ]
 }
