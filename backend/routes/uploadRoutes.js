@@ -204,12 +204,22 @@ router.post('/', upload.single('csvFile'), (req, res) => {
 
           } catch (error) {
             console.error(`[Attempt ${attempt} Failed]:`, error.message);
-            if (attempt === 1) {
-              console.log("⚠️ Retrying Groq AI request in 1 second...");
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              return await processBatchWithAI(batch, 2);
+            if (attempt < 3) {
+              let delayMs = 2000 * attempt; 
+              
+              // Dynamically parse Groq's rate limit wait time if available
+              const match = error.message.match(/try again in ([0-9.]+)s/);
+              if (match) {
+                 delayMs = Math.ceil(parseFloat(match[1]) * 1000) + 1000;
+                 console.log(`⚠️ Rate limit hit. Retrying in ${delayMs / 1000} seconds...`);
+              } else {
+                 console.log(`⚠️ Retrying Groq AI request in ${delayMs / 1000} seconds...`);
+              }
+              
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+              return await processBatchWithAI(batch, attempt + 1);
             }
-            throw new Error("Batch failed permanently after 2 attempts.");
+            throw new Error("Batch failed permanently after 3 attempts.");
           }
         };
 
