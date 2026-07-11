@@ -84,6 +84,11 @@ router.post('/', upload.single('csvFile'), (req, res) => {
                   mappedData = [parsed];
                }
             }
+            
+            // Prevent AI hallucinating extra rows which breaks count parity
+            if (mappedData.length > batch.length) {
+               mappedData = mappedData.slice(0, batch.length);
+            }
 
             const VALID_STATUSES = ['GOOD_LEAD_FOLLOW_UP', 'DID_NOT_CONNECT', 'BAD_LEAD', 'SALE_DONE'];
             const VALID_SOURCES = ['Organic', 'Paid', 'Referral', 'CSV_Import', 'Other'];
@@ -200,7 +205,8 @@ router.post('/', upload.single('csvFile'), (req, res) => {
           } catch (error) {
             console.error(`[Attempt ${attempt} Failed]:`, error.message);
             if (attempt === 1) {
-              console.log("⚠️ Retrying Groq AI request...");
+              console.log("⚠️ Retrying Groq AI request in 1 second...");
+              await new Promise(resolve => setTimeout(resolve, 1000));
               return await processBatchWithAI(batch, 2);
             }
             throw new Error("Batch failed permanently after 2 attempts.");
